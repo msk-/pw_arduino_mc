@@ -35,6 +35,12 @@
 /****************** CONSTANTS *******************/
 #define US_PER_SEC    (1000*1000)
 
+/******************* UTILITY ********************/
+#define MAX(a,b) ((a > b) ? a : b)
+
+/******************** LIMITS ********************/
+#define UINT8_MAX 0xFF
+
 /******************* PIN DEFS *******************/
 #define EN_RHS        6   /*  enable  A,  must  be  PWM  */
 #define RHS_PIN1      5
@@ -188,7 +194,7 @@ void loop()
 {
     get_instruction();
     read_update_quadrature();
-    update_motor_control();
+    update_control_state();
 }
 
 /**************************************************
@@ -212,7 +218,7 @@ void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int
  *   LHS motor full-speed backward:
  *     motor(MOTOR_LHS, motor_backward, 0xFF);
  */
-void motor(int motor_ind, motor_control_e mode, uint8_t duty)
+void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty)
 {
     int en_pin = (motor_ind == MOTOR_RHS) ? EN_RHS : EN_LHS;
     int in_0 = (motor_ind == MOTOR_RHS) ? RHS_PIN1 : LHS_PIN1;
@@ -316,6 +322,7 @@ void get_instruction()
             checksum = (checksum == HEADER_BYTE) ? 0 : checksum;
             if (checksum == read_byte)
             {
+                handle_ctrl_frame_received(&new_ctrl_frame);
                 /* TODO: echo the received control frame back to the pi */
             }
             read_state = read_state_none;
@@ -362,6 +369,13 @@ void read_update_quadrature()
     read_update_motor_quadrature(MOTOR_LHS);
 }
 
+/* Updates the output control state for each motor */
+void update_control_state()
+{
+    update_motor_control(MOTOR_RHS);
+    update_motor_control(MOTOR_LHS);
+}
+
 /* Uses error between observed speed and desired speed to calculate PWM duty
  * (power to motor) in order to achieve desired speed */
 void update_motor_control(int motor_ind)
@@ -369,5 +383,7 @@ void update_motor_control(int motor_ind)
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     uint16_t error = motor->target_freq - motor->freq;
     uint16_t new_power = K_P * error;
+    uint8_t duty = MAX(UINT8_MAX, new_power);
+    set_motor_params(motor_ind, motor_forward, duty);
 }
 
