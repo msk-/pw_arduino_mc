@@ -1,3 +1,36 @@
+/*****************************************************
+*
+* Pi Wars Robot Software (PWRS) Motor Controller
+*
+* Copyright (c) 2014 Matt Kingston (mattkingston@gmail.com)
+*
+* PWRS is free software: you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* PWRS is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with PWRS.  If not, see <http://www.gnu.org/licenses/>.
+*
+* This is the motor controller software, in the form of an
+* Arduino sketch.
+*
+*****************************************************/
+
+/**************************************************
+* Includes
+***************************************************/
+
+/* None */
+
+/**************************************************
+* Defines
+***************************************************/
 
 /****************** CONSTANTS *******************/
 #define US_PER_SEC    (1000*1000)
@@ -42,26 +75,19 @@
 #define  CMD_ACK      0x04
 #define  CMD_STALL    0x05
 
-/******************** TYPES *********************/
-typedef enum
+/**************************************************
+* Data Types
+**************************************************/
+
+typedef enum quad_state_e
 {
     qs_backward = 0,
     qs_forward = 1,
     qs_no_change = 2,
     qs_error = 3
-} quad_state;
+} quad_state_e;
 
-/* Quadrature encoder interpretation matrix */
-/* QSCM[old_val][curr_val] */
-quad_state QSCM[4][4] = 
-{
-    {  qs_no_change,  qs_backward,   qs_forward,    qs_error      },
-    {  qs_forward,    qs_no_change,  qs_error,      qs_backward   },
-    {  qs_backward,   qs_error,      qs_no_change,  qs_forward    },
-    {  qs_error,      qs_forward,    qs_backward,   qs_no_change  }
-};
-
-typedef enum
+typedef enum read_state_e
 {
     read_state_none,
     read_state_header,
@@ -72,7 +98,7 @@ typedef enum
     read_state_ticks_1
 } read_state_e;
 
-typedef enum
+typedef enum motor_control_e
 {
     motor_coast,
     motor_forward,
@@ -80,22 +106,22 @@ typedef enum
     motor_brake
 } motor_control_e;
 
-typedef struct
+typedef struct control_frame_t
 {
     uint8_t command;
     uint16_t freq;
     uint16_t ticks;
 } control_frame_t;
 
-typedef struct
+typedef struct motor_state_t
 {
     /* TODO: 
     uint8_t enable_pin;
     uint8_t out_pin_1;
     uint8_t out_pin_2;
     */
-    quad_state desired_dir;
-    quad_state current_dir;
+    quad_state_e desired_dir;
+    quad_state_e current_dir;
     uint8_t curr_duty;
     uint8_t curr_quad_state;
     uint16_t target_freq;
@@ -107,11 +133,31 @@ typedef struct
     uint32_t freq;
 } motor_state_t;
 
+/**************************************************
+* Public Data
+**************************************************/
+
+/* Quadrature encoder interpretation matrix */
+/* QSCM[old_val][curr_val] */
+static const quad_state_e QSCM[4][4] = 
+{
+    {  qs_no_change,  qs_backward,   qs_forward,    qs_error      },
+    {  qs_forward,    qs_no_change,  qs_error,      qs_backward   },
+    {  qs_backward,   qs_error,      qs_no_change,  qs_forward    },
+    {  qs_error,      qs_forward,    qs_backward,   qs_no_change  }
+};
+
 /******************** STATE *********************/
 static motor_state_t rhs_state;
 static motor_state_t lhs_state;
 
-/* Standard Arduino setup function */
+/**************************************************
+* Public Functions
+***************************************************/
+
+/**
+ * Standard Arduino setup function
+ */
 void setup()
 {
     /* Set up pin directions */
@@ -135,6 +181,23 @@ void setup()
     Serial.begin(115200);
 }
 
+/**
+ * Standard Arduino loop function
+ */
+void loop()
+{
+    get_instruction();
+    read_update_quadrature();
+    update_motor_control();
+}
+
+/**************************************************
+* Private Functions
+***************************************************/
+
+/*
+ * Set power/direction of a single motor.
+ */
 void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int duty)
 {
     digitalWrite(in_0, state_0);
@@ -268,7 +331,7 @@ void read_update_motor_quadrature(int motor_ind)
     int q_pin_0 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_0 : QUAD_LHS_0;
     int q_pin_1 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_1 : QUAD_LHS_1;
     uint8_t new_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
-    quad_state new_quad_state = QSCM[motor_state->curr_quad_state][new_pin_state];
+    quad_state_e new_quad_state = QSCM[motor_state->curr_quad_state][new_pin_state];
 
     switch (new_quad_state)
     {
@@ -306,13 +369,5 @@ void update_motor_control(int motor_ind)
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     uint16_t error = motor->target_freq - motor->freq;
     uint16_t new_power = K_P * error;
-}
-
-/* Standard Arduino loop function */
-void loop()
-{
-    get_instruction();
-    read_update_quadrature();
-    update_motor_control();
 }
 
