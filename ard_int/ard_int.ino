@@ -287,6 +287,8 @@ void get_instruction()
             }
             break;
         case read_state_header:
+                digitalWrite(LED, led_pin_state);
+                led_pin_state = (led_pin_state == LOW) ? HIGH : LOW;
             new_ctrl_frame.command = read_byte;
             read_state = read_state_command;
             checksum ^= read_byte;
@@ -316,10 +318,8 @@ void get_instruction()
             if (checksum == read_byte)
             {
                 handle_ctrl_frame_received(&new_ctrl_frame);
-				digitalWrite(LED, led_pin_state);
-				led_pin_state = (led_pin_state == LOW) ? HIGH : LOW;
-                /* Write ack back over serial */
 #if 0
+                /* Write ack back over serial */
                 Serial.write(HEADER_BYTE);
                 Serial.write(CMD_ACK);
                 Serial.write(CMD_ACK ^ 0x00);
@@ -396,3 +396,4 @@ void loop()
     read_update_quadrature();
     update_control_state();
 }
+
