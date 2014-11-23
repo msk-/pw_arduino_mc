@@ -50,10 +50,10 @@
 #define LHS_PIN2      10
 
 /* Quadrature encoder pins. */
-#define QUAD_RHS_0      2
-#define QUAD_RHS_1      3
-#define QUAD_LHS_0      2
-#define QUAD_LHS_1      3
+#define QUAD_RHS_0      3
+#define QUAD_RHS_1      4
+#define QUAD_LHS_0      11
+#define QUAD_LHS_1      12
 
 #define LED           13
 
@@ -157,6 +157,8 @@ static const quad_state_e QSCM[4][4] =
 static motor_state_t rhs_state;
 static motor_state_t lhs_state;
 
+/* TODO: remove */
+uint8_t led_pin_state = HIGH;
 /**************************************************
 * Public Functions
 ***************************************************/
@@ -187,15 +189,6 @@ void setup()
     Serial.begin(115200);
 }
 
-/**
- * Standard Arduino loop function
- */
-void loop()
-{
-    get_instruction();
-    read_update_quadrature();
-    update_control_state();
-}
 
 /**************************************************
 * Private Functions
@@ -277,7 +270,7 @@ void handle_ctrl_frame_received(const control_frame_t* frame)
  * received. Additionally; echo any received commands back to the serial */
 void get_instruction()
 {
-    static read_state_e read_state;
+    static read_state_e read_state = read_state_none;
     static control_frame_t new_ctrl_frame;
     uint8_t read_byte, checksum;
     if (Serial.available())
@@ -323,7 +316,14 @@ void get_instruction()
             if (checksum == read_byte)
             {
                 handle_ctrl_frame_received(&new_ctrl_frame);
-                /* TODO: echo the received control frame back to the pi */
+				digitalWrite(LED, led_pin_state);
+				led_pin_state = (led_pin_state == LOW) ? HIGH : LOW;
+                /* Write ack back over serial */
+#if 0
+                Serial.write(HEADER_BYTE);
+                Serial.write(CMD_ACK);
+                Serial.write(CMD_ACK ^ 0x00);
+#endif
             }
             read_state = read_state_none;
             break;
@@ -369,13 +369,6 @@ void read_update_quadrature()
     read_update_motor_quadrature(MOTOR_LHS);
 }
 
-/* Updates the output control state for each motor */
-void update_control_state()
-{
-    update_motor_control(MOTOR_RHS);
-    update_motor_control(MOTOR_LHS);
-}
-
 /* Uses error between observed speed and desired speed to calculate PWM duty
  * (power to motor) in order to achieve desired speed */
 void update_motor_control(int motor_ind)
@@ -387,3 +380,19 @@ void update_motor_control(int motor_ind)
     set_motor_params(motor_ind, motor_forward, duty);
 }
 
+/* Updates the output control state for each motor */
+void update_control_state()
+{
+    update_motor_control(MOTOR_RHS);
+    update_motor_control(MOTOR_LHS);
+}
+
+/**
+ * Standard Arduino loop function
+ */
+void loop()
+{
+    get_instruction();
+    read_update_quadrature();
+    update_control_state();
+}
