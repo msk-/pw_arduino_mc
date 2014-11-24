@@ -73,13 +73,15 @@
 #define  K_D  0.0
 
 /****************** COMMS DEFS ******************/
-#define  HEADER_BYTE  0xFF
-#define  CMD_LHS_FWD  0x00
-#define  CMD_LHS_BACK 0x01
-#define  CMD_RHS_FWD  0x02
-#define  CMD_RHS_BACK 0x03
-#define  CMD_ACK      0x04
-#define  CMD_STALL    0x05
+#define  HEADER_BYTE               0xFF
+#define  CMD_LHS_FWD               0x00
+#define  CMD_LHS_BACK              0x01
+#define  CMD_RHS_FWD               0x02
+#define  CMD_RHS_BACK              0x03
+#define  CMD_ACK                   0x04
+#define  CMD_STALL                 0x05
+#define  CMD_RHS_CLICKS_REMAINING  0x06
+#define  CMD_LHS_CLICKS_REMAINING  0x06
 
 /**************************************************
 * Data Types
@@ -134,7 +136,7 @@ typedef struct motor_state_t
     uint16_t ticks_remaining;
     /* Stores the times of the most recent two unprocessed motor quadrature
      * state change events in order to calculate speed. */
-    unsigned long change_times_us[2];
+    unsigned long last_change;
     unsigned long dt_us;
     uint32_t freq;
 } motor_state_t;
@@ -157,8 +159,6 @@ static const quad_state_e QSCM[4][4] =
 static motor_state_t rhs_state;
 static motor_state_t lhs_state;
 
-/* TODO: remove */
-uint8_t led_pin_state = HIGH;
 /**************************************************
 * Public Functions
 ***************************************************/
@@ -180,6 +180,8 @@ void setup()
     pinMode(QUAD_RHS_1, INPUT);
     pinMode(QUAD_LHS_0, INPUT);
     pinMode(QUAD_LHS_1, INPUT);
+
+    /* TODO: Set all pin initial states (i.e. motors stopped) */
 
     /* Initialise state */
     memset(&rhs_state, 0, sizeof(rhs_state));
@@ -244,21 +246,25 @@ void handle_ctrl_frame_received(const control_frame_t* frame)
     switch (frame->command)
     {
     case CMD_LHS_FWD:
+        Serial.write('1');
         lhs_state.desired_dir = qs_forward;
         lhs_state.ticks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         break;
     case CMD_LHS_BACK:
+        Serial.write('3');
         lhs_state.desired_dir = qs_backward;
         lhs_state.ticks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         break;
     case CMD_RHS_FWD:
+        Serial.write('2');
         rhs_state.desired_dir = qs_forward;
         rhs_state.ticks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
         break;
     case CMD_RHS_BACK:
+        Serial.write('4');
         rhs_state.desired_dir = qs_backward;
         rhs_state.ticks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
@@ -287,8 +293,6 @@ void get_instruction()
             }
             break;
         case read_state_header:
-                digitalWrite(LED, led_pin_state);
-                led_pin_state = (led_pin_state == LOW) ? HIGH : LOW;
             new_ctrl_frame.command = read_byte;
             read_state = read_state_command;
             checksum ^= read_byte;
@@ -318,12 +322,16 @@ void get_instruction()
             if (checksum == read_byte)
             {
                 handle_ctrl_frame_received(&new_ctrl_frame);
-#if 0
                 /* Write ack back over serial */
+                #if 0
                 Serial.write(HEADER_BYTE);
                 Serial.write(CMD_ACK);
                 Serial.write(CMD_ACK ^ 0x00);
-#endif
+                #endif
+            }
+            else
+            {
+                /* TODO: write nack back over serial */
             }
             read_state = read_state_none;
             break;
@@ -339,6 +347,7 @@ void read_update_motor_quadrature(int motor_ind)
     int q_pin_1 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_1 : QUAD_LHS_1;
     uint8_t new_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
     quad_state_e new_quad_state = QSCM[motor_state->curr_quad_state][new_pin_state];
+    unsigned long now = micros();
 
     switch (new_quad_state)
     {
@@ -353,11 +362,9 @@ void read_update_motor_quadrature(int motor_ind)
         /* Fall-through intentional */
     case qs_backward:
         motor_state->current_dir = new_quad_state;
-        motor_state->change_times_us[1] = motor_state->change_times_us[0];
-        motor_state->change_times_us[0] = micros();
-        motor_state->dt_us =
-            motor_state->change_times_us[0] - motor_state->change_times_us[1];
+        motor_state->dt_us = now - motor_state->last_change;
         motor_state->freq = (US_PER_SEC) / motor_state->dt_us;
+        motor_state->last_change = now;
         break;
     }
 }

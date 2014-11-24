@@ -16,7 +16,7 @@
 using namespace boost::asio;
 using namespace std::placeholders;
 
-const std::size_t ARDUINO_READ_BUFFER_SIZE = 100;
+const std::size_t ARDUINO_READ_BUFFER_SIZE = 1;
 const std::size_t STDIN_BUFFER_SIZE = 1;
 struct termios saved_attributes;
 
@@ -31,10 +31,14 @@ static std::array<std::array<uint8_t, 7>, 4> instructions =
 };
 #endif
 
-static const boost::array<uint8_t, 7> lhs_fwd_fullspeed = {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> rhs_fwd_fullspeed = {{ HEADER_BYTE, CMD_RHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> lhs_back_fullspeed = {{ HEADER_BYTE, CMD_LHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> rhs_back_fullspeed = {{ HEADER_BYTE, CMD_RHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
+static const boost::array<uint8_t, 7> lhs_fwd_fullspeed = 
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
+static const boost::array<uint8_t, 7> rhs_fwd_fullspeed = 
+    {{ HEADER_BYTE, CMD_RHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
+static const boost::array<uint8_t, 7> lhs_back_fullspeed = 
+    {{ HEADER_BYTE, CMD_LHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
+static const boost::array<uint8_t, 7> rhs_back_fullspeed = 
+    {{ HEADER_BYTE, CMD_RHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
 
 void reset_tty()
 {
@@ -77,6 +81,7 @@ void handle_arduino_write(
         std::cout << ec.message() << std::endl;
         exit(3);
     }
+    std::cout << "Write to Arduino successful" << std::endl;
 }
 
 void handle_arduino_response(
@@ -156,19 +161,27 @@ void handle_user_input(
 int main()
 {
     io_service io_ctx;
+    /*
     try
     {
+    */
         streambuf stdin_buf(STDIN_BUFFER_SIZE);
         streambuf arduino_in_buf(ARDUINO_READ_BUFFER_SIZE);
-        serial_port arduino(io_ctx, "/dev/ttyACM0");
-        posix::stream_descriptor stdin_(io_ctx, ::dup(STDIN_FILENO));
-        set_tty_noncanonical();
 
-        async_read(stdin_, stdin_buf, std::bind(handle_user_input, _1, _2,
-                    std::ref(stdin_buf), std::ref(stdin_), std::ref(arduino)));
+        /* serial_port arduino(arduino_io_ctx, "/dev/ttyACM0"); */
+        serial_port arduino(io_ctx, "/dev/ttyACM0");
+        serial_port_base::baud_rate baud(115200);
+        arduino.set_option(baud);
+
+        set_tty_noncanonical();
+        posix::stream_descriptor stdin_(io_ctx, ::dup(STDIN_FILENO));
 
         async_read(arduino, arduino_in_buf, std::bind(handle_arduino_response,
                     _1, _2, std::ref(arduino_in_buf), std::ref(arduino)));
+
+        async_read(stdin_, stdin_buf, std::bind(handle_user_input, _1, _2,
+                    std::ref(stdin_buf), std::ref(stdin_), std::ref(arduino)));
+        /*
     }
     catch (const boost::system::error_code& ec)
     {
@@ -181,6 +194,7 @@ int main()
         std::cout << "Error occurred during setup: " << std::endl;
         std::cout << ec.what() << std::endl;
     }
+    */
 
     io_ctx.run();
     return 0;
