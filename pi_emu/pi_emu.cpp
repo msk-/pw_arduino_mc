@@ -31,14 +31,14 @@ static std::array<std::array<uint8_t, 7>, 4> instructions =
 };
 #endif
 
-static const boost::array<uint8_t, 7> lhs_fwd_fullspeed = 
-    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> rhs_fwd_fullspeed = 
-    {{ HEADER_BYTE, CMD_RHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> lhs_back_fullspeed = 
-    {{ HEADER_BYTE, CMD_LHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
-static const boost::array<uint8_t, 7> rhs_back_fullspeed = 
-    {{ HEADER_BYTE, CMD_RHS_BACK, 0x00, 0xFF, 0x00, 0xFF, 0x00 }};
+static const boost::array<uint8_t, 5> lhs_fwd_fullspeed =
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0xFE, 0xFE, 0x00 }};
+static const boost::array<uint8_t, 5> rhs_fwd_fullspeed =
+    {{ HEADER_BYTE, CMD_RHS_FWD, 0xFE, 0xFE, HEADER_BYTE ^ CMD_RHS_FWD }};
+static const boost::array<uint8_t, 5> lhs_back_fullspeed =
+    {{ HEADER_BYTE, CMD_LHS_BACK, 0xFE, 0xFE, HEADER_BYTE ^ CMD_LHS_BACK }};
+static const boost::array<uint8_t, 5> rhs_back_fullspeed =
+    {{ HEADER_BYTE, CMD_RHS_BACK, 0xFE, 0xFE, HEADER_BYTE ^ CMD_RHS_BACK }};
 
 void reset_tty()
 {

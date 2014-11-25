@@ -100,10 +100,8 @@ typedef enum read_state_e
     read_state_none,
     read_state_header,
     read_state_command,
-    read_state_speed_0,
-    read_state_speed_1,
-    read_state_ticks_0,
-    read_state_ticks_1
+    read_state_speed,
+    read_state_ticks
 } read_state_e;
 
 typedef enum motor_control_e
@@ -278,63 +276,58 @@ void get_instruction()
 {
     static read_state_e read_state = read_state_none;
     static control_frame_t new_ctrl_frame;
-    uint8_t read_byte, checksum;
+    static uint8_t checksum;
+    uint8_t read_byte;
     if (Serial.available())
     {
         read_byte = Serial.read();
-        switch (read_state)
+        if (read_byte == HEADER_BYTE)
         {
-        case read_state_none:
-            if (read_byte == HEADER_BYTE)
+            read_state = read_state_header;
+            checksum = HEADER_BYTE;
+        }
+        else
+        {
+            switch (read_state)
             {
-                read_state = read_state_header;
-                checksum = 0;
-                memset(&new_ctrl_frame, 0, sizeof(new_ctrl_frame));
-            }
-            break;
-        case read_state_header:
-            new_ctrl_frame.command = read_byte;
-            read_state = read_state_command;
-            checksum ^= read_byte;
-            break;
-        case read_state_command:
-            new_ctrl_frame.freq = read_byte << 8;
-            read_state = read_state_speed_0;
-            checksum ^= read_byte;
-            break;
-        case read_state_speed_0:
-            new_ctrl_frame.freq += read_byte;
-            read_state = read_state_speed_1;
-            checksum ^= read_byte;
-            break;
-        case read_state_speed_1:
-            new_ctrl_frame.ticks = read_byte << 8;
-            read_state = read_state_ticks_0;
-            checksum ^= read_byte;
-            break;
-        case read_state_ticks_0:
-            new_ctrl_frame.ticks += read_byte;
-            read_state = read_state_ticks_1;
-            checksum ^= read_byte;
-            break;
-        case read_state_ticks_1:
-            checksum = (checksum == HEADER_BYTE) ? 0 : checksum;
-            if (checksum == read_byte)
-            {
-                handle_ctrl_frame_received(&new_ctrl_frame);
-                /* Write ack back over serial */
+            case read_state_none:
+                break;
+            case read_state_header:
+                new_ctrl_frame.command = read_byte;
+                read_state = read_state_command;
+                checksum ^= read_byte;
+                break;
+            case read_state_command:
+                new_ctrl_frame.freq = read_byte << 1;
+                read_state = read_state_speed;
+                checksum ^= read_byte;
+                break;
+            case read_state_speed:
+                new_ctrl_frame.ticks = read_byte << 1;
+                read_state = read_state_ticks;
+                checksum ^= read_byte;
+                break;
+            case read_state_ticks:
+                checksum = (checksum == HEADER_BYTE) ? 0 : checksum;
+                if (checksum == read_byte)
+                {
+                    handle_ctrl_frame_received(&new_ctrl_frame);
+                    /* Write ack back over serial */
+                    #if 0
+                    Serial.write(HEADER_BYTE);
+                    Serial.write(CMD_ACK);
+                    Serial.write(CMD_ACK ^ 0x00);
+                    #endif
+                }
                 #if 0
-                Serial.write(HEADER_BYTE);
-                Serial.write(CMD_ACK);
-                Serial.write(CMD_ACK ^ 0x00);
+                else
+                {
+                    /* TODO: write nack back over serial? */
+                }
                 #endif
+                read_state = read_state_none;
+                break;
             }
-            else
-            {
-                /* TODO: write nack back over serial */
-            }
-            read_state = read_state_none;
-            break;
         }
     }
 }
