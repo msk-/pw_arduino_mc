@@ -5,13 +5,15 @@
 #include <boost/array.hpp>
 
 /****************** COMMS DEFS ******************/
-#define  HEADER_BYTE   0xFF
-#define  CMD_LHS_FWD   0x00
-#define  CMD_LHS_BACK  0x01
-#define  CMD_RHS_FWD   0x02
-#define  CMD_RHS_BACK  0x03
-#define  CMD_ACK       0x04
-#define  CMD_STALL     0x05
+#define  HEADER_BYTE               0xFF
+#define  CMD_LHS_FWD               0x00
+#define  CMD_LHS_BACK              0x01
+#define  CMD_RHS_FWD               0x02
+#define  CMD_RHS_BACK              0x03
+#define  CMD_ACK                   0x04
+#define  CMD_STALL                 0x05
+#define  CMD_RHS_CLICKS_REMAINING  0x06
+#define  CMD_LHS_CLICKS_REMAINING  0x07
 
 using namespace boost::asio;
 using namespace std::placeholders;
@@ -19,6 +21,21 @@ using namespace std::placeholders;
 const std::size_t ARDUINO_READ_BUFFER_SIZE = 1;
 const std::size_t STDIN_BUFFER_SIZE = 1;
 struct termios saved_attributes;
+
+typedef enum read_state_e
+{
+    read_state_none,
+    read_state_header,
+    read_state_command,
+    read_state_speed,
+    read_state_clicks
+} read_state_e;
+
+struct clicks_remaining_msg_t
+{
+    uint8_t cmd;
+    uint16_t clicks_remaining;
+};
 
 #if 0
 #pragma GCC diagnostic ignored "-Wmissing-braces"
@@ -91,6 +108,8 @@ void handle_arduino_response(
         serial_port& arduino
         )
 {
+    static read_state_e read_state;
+    static clicks_remaining_msg_t msg;
     if (ec)
     {
         std::cout << "Error in " << __func__ << std::endl;
@@ -98,10 +117,48 @@ void handle_arduino_response(
         std::cout << ec.message() << std::endl;
         exit(2);
     }
+#if 0
     std::cout << "Received from arduino: " << std::string(
             buffers_begin(arduino_in_buf.data()), 
             buffers_begin(arduino_in_buf.data()) + bytes_transferred
             ) << std::endl;
+#endif
+    uint8_t read_byte = std::string(
+            buffers_begin(arduino_in_buf.data()), 
+            buffers_begin(arduino_in_buf.data()) + bytes_transferred
+            )[0];
+    if (read_byte == HEADER_BYTE)
+    {
+        read_state = read_state_header;
+    }
+    else
+    {
+        switch (read_state)
+        {
+        case read_state_header:
+            msg.cmd = read_byte;
+            read_state = read_state_command;
+            break;
+        case read_state_command:
+            msg.clicks_remaining = read_byte;
+            read_state = read_state_clicks;
+            break;
+        case read_state_clicks:
+            if (read_byte == (HEADER_BYTE ^ msg.cmd ^ msg.clicks_remaining))
+            {
+                std::cout << "Got clicks remaining message from Arduino:" <<
+                    std::endl << "Clicks remaining: " << msg.clicks_remaining <<
+                    std::endl << "Motor: " << ((msg.cmd == CMD_LHS_CLICKS_REMAINING) ?
+                        "LHS" : "RHS") << std::endl;
+            }
+            read_state = read_state_none;
+            break;
+        case read_state_speed:
+        case read_state_none:
+            std::cout << "Got bollocks from arduino: " << read_byte << std::endl;
+            break;
+        }
+    }
     arduino_in_buf.consume(bytes_transferred);
     async_read(arduino, arduino_in_buf, std::bind(handle_arduino_response,
                 _1, _2, std::ref(arduino_in_buf), std::ref(arduino)));
