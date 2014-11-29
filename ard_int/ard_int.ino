@@ -214,7 +214,7 @@ void loop()
     get_instruction();
     read_update_quadrature();
     update_control_state();
-    send_state_update();
+    /*send_state_update();*/
 }
 
 /**************************************************
@@ -228,7 +228,8 @@ static void control_motor(int en_pin, int in_0, int state_0, int in_1, int state
 {
     digitalWrite(in_0, state_0);
     digitalWrite(in_1, state_1);
-    analogWrite(en_pin, duty);
+    /*analogWrite(en_pin, duty);*/
+    analogWrite(en_pin, 255);
 }
 
 /* Instruct a specific motor to move forward/backward/stop/coast.
@@ -275,24 +276,28 @@ static void handle_ctrl_frame_received(const control_frame_t* frame)
         lhs_state.desired_dir = qs_forward;
         lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
+        lhs_state.fresh_state = true;
         break;
     case CMD_LHS_BACK:
         Serial.write('3');
         lhs_state.desired_dir = qs_backward;
         lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
+        lhs_state.fresh_state = true;
         break;
     case CMD_RHS_FWD:
         Serial.write('2');
         rhs_state.desired_dir = qs_forward;
         rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
+        rhs_state.fresh_state = true;
         break;
     case CMD_RHS_BACK:
         Serial.write('4');
         rhs_state.desired_dir = qs_backward;
         rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
+        rhs_state.fresh_state = true;
         break;
     }
 }
@@ -403,9 +408,11 @@ static void read_update_quadrature()
  * (power to motor) in order to achieve desired speed */
 static void update_motor_control(int motor_ind)
 {
+    /*Serial.write('1');*/
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     if (motor->fresh_state)
     {
+        Serial.write('2');
         if (motor->clicks_remaining > 0)
         {
             uint16_t error = motor->target_freq - motor->freq;
@@ -436,7 +443,6 @@ static void send_state_update()
 {
     static uint8_t msg_countdown = 0;
     uint8_t clicks_remaining = (lhs_state.clicks_remaining >> 1) & 0xFF;
-    #if 0
     if (msg_countdown == 0)
     {
         Serial.write(HEADER_BYTE);
@@ -444,7 +450,6 @@ static void send_state_update()
         Serial.write(clicks_remaining);
         Serial.write(HEADER_BYTE ^ CMD_LHS_CLICKS_REMAINING ^ clicks_remaining);
     }
-    #endif
 
     clicks_remaining = (rhs_state.clicks_remaining >> 1) & 0xFF;
     if (msg_countdown == 0)
