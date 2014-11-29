@@ -143,6 +143,20 @@ typedef struct motor_state_t
 } motor_state_t;
 
 /**************************************************
+* Private function declarations
+***************************************************/
+
+static void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int duty);
+static void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty);
+static void handle_ctrl_frame_received(const control_frame_t* frame);
+static void get_instruction();
+static void read_update_motor_quadrature(int motor_ind);
+static void read_update_quadrature();
+static void update_motor_control(int motor_ind);
+static void update_control_state();
+static void send_state_update();
+
+/**************************************************
 * Public Data
 **************************************************/
 
@@ -192,6 +206,16 @@ void setup()
     Serial.begin(115200);
 }
 
+/**
+ * Standard Arduino loop function
+ */
+void loop()
+{
+    get_instruction();
+    read_update_quadrature();
+    update_control_state();
+    send_state_update();
+}
 
 /**************************************************
 * Private Functions
@@ -200,7 +224,7 @@ void setup()
 /*
  * Set power/direction of a single motor.
  */
-void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int duty)
+static void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int duty)
 {
     digitalWrite(in_0, state_0);
     digitalWrite(in_1, state_1);
@@ -214,7 +238,7 @@ void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int
  *   LHS motor full-speed backward:
  *     motor(MOTOR_LHS, motor_backward, 0xFF);
  */
-void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty)
+static void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty)
 {
     int en_pin = (motor_ind == MOTOR_RHS) ? EN_RHS : EN_LHS;
     int in_0 = (motor_ind == MOTOR_RHS) ? RHS_PIN1 : LHS_PIN1;
@@ -242,7 +266,7 @@ void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty)
 
 /* Called when a control frame is received over serial. Manages requested state
  * updates */
-void handle_ctrl_frame_received(const control_frame_t* frame)
+static void handle_ctrl_frame_received(const control_frame_t* frame)
 {
     switch (frame->command)
     {
@@ -275,7 +299,7 @@ void handle_ctrl_frame_received(const control_frame_t* frame)
 
 /* Read from the serial port and update the motor state depending on the command
  * received. Additionally; echo any received commands back to the serial */
-void get_instruction()
+static void get_instruction()
 {
     static read_state_e read_state = read_state_none;
     static control_frame_t new_ctrl_frame;
@@ -336,7 +360,7 @@ void get_instruction()
 }
 
 /* Updates quadrature information for one motor */
-void read_update_motor_quadrature(int motor_ind)
+static void read_update_motor_quadrature(int motor_ind)
 {
     motor_state_t* motor_state = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     int q_pin_0 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_0 : QUAD_LHS_0;
@@ -369,7 +393,7 @@ void read_update_motor_quadrature(int motor_ind)
 }
 
 /* Updates quadrature information for each motor */
-void read_update_quadrature()
+static void read_update_quadrature()
 {
     read_update_motor_quadrature(MOTOR_RHS);
     /*read_update_motor_quadrature(MOTOR_LHS);*/
@@ -377,7 +401,7 @@ void read_update_quadrature()
 
 /* Uses error between observed speed and desired speed to calculate PWM duty
  * (power to motor) in order to achieve desired speed */
-void update_motor_control(int motor_ind)
+static void update_motor_control(int motor_ind)
 {
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     if (motor->fresh_state)
@@ -402,13 +426,13 @@ void update_motor_control(int motor_ind)
 }
 
 /* Updates the output control state for each motor */
-void update_control_state()
+static void update_control_state()
 {
     update_motor_control(MOTOR_RHS);
     /*update_motor_control(MOTOR_LHS);*/
 }
 
-void send_state_update()
+static void send_state_update()
 {
     static uint8_t msg_countdown = 0;
     uint8_t clicks_remaining = (lhs_state.clicks_remaining >> 1) & 0xFF;
@@ -435,14 +459,5 @@ void send_state_update()
     msg_countdown--;
 }
 
-/**
- * Standard Arduino loop function
- */
-void loop()
-{
-    get_instruction();
-    read_update_quadrature();
-    update_control_state();
-    send_state_update();
-}
+
 
