@@ -50,10 +50,10 @@
 #define LHS_PIN2      10
 
 /* Quadrature encoder pins. */
-#define QUAD_RHS_0      2
-#define QUAD_RHS_1      3
-#define QUAD_LHS_0      2
-#define QUAD_LHS_1      3
+#define QUAD_RHS_0      3
+#define QUAD_RHS_1      4
+#define QUAD_LHS_0      11
+#define QUAD_LHS_1      12
 
 #define LED           13
 
@@ -73,13 +73,15 @@
 #define  K_D  0.0
 
 /****************** COMMS DEFS ******************/
-#define  HEADER_BYTE  0xFF
-#define  CMD_LHS_FWD  0x00
-#define  CMD_LHS_BACK 0x01
-#define  CMD_RHS_FWD  0x02
-#define  CMD_RHS_BACK 0x03
-#define  CMD_ACK      0x04
-#define  CMD_STALL    0x05
+#define  HEADER_BYTE               0xFF
+#define  CMD_LHS_FWD               0x00
+#define  CMD_LHS_BACK              0x01
+#define  CMD_RHS_FWD               0x02
+#define  CMD_RHS_BACK              0x03
+#define  CMD_ACK                   0x04
+#define  CMD_STALL                 0x05
+#define  CMD_RHS_CLICKS_REMAINING  0x06
+#define  CMD_LHS_CLICKS_REMAINING  0x07
 
 /**************************************************
 * Data Types
@@ -98,10 +100,8 @@ typedef enum read_state_e
     read_state_none,
     read_state_header,
     read_state_command,
-    read_state_speed_0,
-    read_state_speed_1,
-    read_state_ticks_0,
-    read_state_ticks_1
+    read_state_speed,
+    read_state_clicks
 } read_state_e;
 
 typedef enum motor_control_e
@@ -128,13 +128,14 @@ typedef struct motor_state_t
     */
     quad_state_e desired_dir;
     quad_state_e current_dir;
+    bool fresh_state;
     uint8_t curr_duty;
-    uint8_t curr_quad_state;
+    uint8_t curr_quad_pin_state;
     uint16_t target_freq;
-    uint16_t ticks_remaining;
+    uint16_t clicks_remaining;
     /* Stores the times of the most recent two unprocessed motor quadrature
      * state change events in order to calculate speed. */
-    unsigned long change_times_us[2];
+    unsigned long last_change;
     unsigned long dt_us;
     uint32_t freq;
 } motor_state_t;
@@ -179,6 +180,8 @@ void setup()
     pinMode(QUAD_LHS_0, INPUT);
     pinMode(QUAD_LHS_1, INPUT);
 
+    /* TODO: Set all pin initial states (i.e. motors stopped) */
+
     /* Initialise state */
     memset(&rhs_state, 0, sizeof(rhs_state));
     memset(&lhs_state, 0, sizeof(lhs_state));
@@ -187,15 +190,6 @@ void setup()
     Serial.begin(115200);
 }
 
-/**
- * Standard Arduino loop function
- */
-void loop()
-{
-    get_instruction();
-    read_update_quadrature();
-    update_control_state();
-}
 
 /**************************************************
 * Private Functions
@@ -251,23 +245,27 @@ void handle_ctrl_frame_received(const control_frame_t* frame)
     switch (frame->command)
     {
     case CMD_LHS_FWD:
+        Serial.write('1');
         lhs_state.desired_dir = qs_forward;
-        lhs_state.ticks_remaining = frame->ticks;
+        lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         break;
     case CMD_LHS_BACK:
+        Serial.write('3');
         lhs_state.desired_dir = qs_backward;
-        lhs_state.ticks_remaining = frame->ticks;
+        lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         break;
     case CMD_RHS_FWD:
+        Serial.write('2');
         rhs_state.desired_dir = qs_forward;
-        rhs_state.ticks_remaining = frame->ticks;
+        rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
         break;
     case CMD_RHS_BACK:
+        Serial.write('4');
         rhs_state.desired_dir = qs_backward;
-        rhs_state.ticks_remaining = frame->ticks;
+        rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
         break;
     }
@@ -277,56 +275,60 @@ void handle_ctrl_frame_received(const control_frame_t* frame)
  * received. Additionally; echo any received commands back to the serial */
 void get_instruction()
 {
-    static read_state_e read_state;
+    static read_state_e read_state = read_state_none;
     static control_frame_t new_ctrl_frame;
-    uint8_t read_byte, checksum;
+    static uint8_t checksum;
+    uint8_t read_byte;
     if (Serial.available())
     {
         read_byte = Serial.read();
-        switch (read_state)
+        if (read_byte == HEADER_BYTE)
         {
-        case read_state_none:
-            if (read_byte == HEADER_BYTE)
+            read_state = read_state_header;
+            checksum = HEADER_BYTE;
+        }
+        else
+        {
+            switch (read_state)
             {
-                read_state = read_state_header;
-                checksum = 0;
-                memset(&new_ctrl_frame, 0, sizeof(new_ctrl_frame));
+            case read_state_none:
+                break;
+            case read_state_header:
+                new_ctrl_frame.command = read_byte;
+                read_state = read_state_command;
+                checksum ^= read_byte;
+                break;
+            case read_state_command:
+                new_ctrl_frame.freq = read_byte << 1;
+                read_state = read_state_speed;
+                checksum ^= read_byte;
+                break;
+            case read_state_speed:
+                new_ctrl_frame.ticks = read_byte << 1;
+                read_state = read_state_clicks;
+                checksum ^= read_byte;
+                break;
+            case read_state_clicks:
+                checksum = (checksum == HEADER_BYTE) ? 0 : checksum;
+                if (checksum == read_byte)
+                {
+                    handle_ctrl_frame_received(&new_ctrl_frame);
+                    /* Write ack back over serial */
+                    #if 0
+                    Serial.write(HEADER_BYTE);
+                    Serial.write(CMD_ACK);
+                    Serial.write(CMD_ACK ^ 0x00);
+                    #endif
+                }
+                #if 0
+                else
+                {
+                    /* TODO: write nack back over serial? */
+                }
+                #endif
+                read_state = read_state_none;
+                break;
             }
-            break;
-        case read_state_header:
-            new_ctrl_frame.command = read_byte;
-            read_state = read_state_command;
-            checksum ^= read_byte;
-            break;
-        case read_state_command:
-            new_ctrl_frame.freq = read_byte << 8;
-            read_state = read_state_speed_0;
-            checksum ^= read_byte;
-            break;
-        case read_state_speed_0:
-            new_ctrl_frame.freq += read_byte;
-            read_state = read_state_speed_1;
-            checksum ^= read_byte;
-            break;
-        case read_state_speed_1:
-            new_ctrl_frame.ticks = read_byte << 8;
-            read_state = read_state_ticks_0;
-            checksum ^= read_byte;
-            break;
-        case read_state_ticks_0:
-            new_ctrl_frame.ticks += read_byte;
-            read_state = read_state_ticks_1;
-            checksum ^= read_byte;
-            break;
-        case read_state_ticks_1:
-            checksum = (checksum == HEADER_BYTE) ? 0 : checksum;
-            if (checksum == read_byte)
-            {
-                handle_ctrl_frame_received(&new_ctrl_frame);
-                /* TODO: echo the received control frame back to the pi */
-            }
-            read_state = read_state_none;
-            break;
         }
     }
 }
@@ -337,8 +339,11 @@ void read_update_motor_quadrature(int motor_ind)
     motor_state_t* motor_state = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     int q_pin_0 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_0 : QUAD_LHS_0;
     int q_pin_1 = (motor_ind == MOTOR_RHS) ? QUAD_RHS_1 : QUAD_LHS_1;
-    uint8_t new_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
-    quad_state_e new_quad_state = QSCM[motor_state->curr_quad_state][new_pin_state];
+    uint8_t new_quad_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
+    quad_state_e new_quad_state = QSCM[motor_state->curr_quad_pin_state][new_quad_pin_state];
+    motor_state->curr_quad_pin_state = new_quad_pin_state;
+    Serial.write('0' + new_quad_pin_state);
+    unsigned long now = micros();
 
     switch (new_quad_state)
     {
@@ -352,12 +357,11 @@ void read_update_motor_quadrature(int motor_ind)
     case qs_forward:
         /* Fall-through intentional */
     case qs_backward:
+        motor_state->fresh_state = true;
         motor_state->current_dir = new_quad_state;
-        motor_state->change_times_us[1] = motor_state->change_times_us[0];
-        motor_state->change_times_us[0] = micros();
-        motor_state->dt_us =
-            motor_state->change_times_us[0] - motor_state->change_times_us[1];
+        motor_state->dt_us = now - motor_state->last_change;
         motor_state->freq = (US_PER_SEC) / motor_state->dt_us;
+        motor_state->last_change = now;
         break;
     }
 }
@@ -369,6 +373,29 @@ void read_update_quadrature()
     read_update_motor_quadrature(MOTOR_LHS);
 }
 
+/* Uses error between observed speed and desired speed to calculate PWM duty
+ * (power to motor) in order to achieve desired speed */
+void update_motor_control(int motor_ind)
+{
+    motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
+    if (motor->fresh_state)
+    {
+        if (motor->clicks_remaining > 0)
+        {
+            uint16_t error = motor->target_freq - motor->freq;
+            uint16_t new_power = K_P * error;
+            uint8_t duty = MAX(UINT8_MAX, new_power);
+            set_motor_params(motor_ind, motor_forward, duty);
+            motor->clicks_remaining--;
+        }
+        else
+        {
+            /* TODO: motor_brake or motor_coast? */
+            set_motor_params(motor_ind, motor_brake, 0x00);
+        }
+    }
+}
+
 /* Updates the output control state for each motor */
 void update_control_state()
 {
@@ -376,14 +403,41 @@ void update_control_state()
     update_motor_control(MOTOR_LHS);
 }
 
-/* Uses error between observed speed and desired speed to calculate PWM duty
- * (power to motor) in order to achieve desired speed */
-void update_motor_control(int motor_ind)
+void send_state_update()
 {
-    motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
-    uint16_t error = motor->target_freq - motor->freq;
-    uint16_t new_power = K_P * error;
-    uint8_t duty = MAX(UINT8_MAX, new_power);
-    set_motor_params(motor_ind, motor_forward, duty);
+    static uint8_t msg_countdown = 0;
+    uint8_t clicks_remaining = (lhs_state.clicks_remaining >> 1) & 0xFF;
+    #if 0
+    if (msg_countdown == 0)
+    {
+        Serial.write(HEADER_BYTE);
+        Serial.write(CMD_LHS_CLICKS_REMAINING);
+        Serial.write(clicks_remaining);
+        Serial.write(HEADER_BYTE ^ CMD_LHS_CLICKS_REMAINING ^ clicks_remaining);
+    }
+    #endif
+
+    clicks_remaining = (rhs_state.clicks_remaining >> 1) & 0xFF;
+    if (msg_countdown == 0)
+    {
+        Serial.write(HEADER_BYTE);
+        Serial.write(CMD_RHS_CLICKS_REMAINING);
+        Serial.write(clicks_remaining);
+        Serial.write(HEADER_BYTE ^ CMD_RHS_CLICKS_REMAINING ^ clicks_remaining);
+        msg_countdown = 10;
+    }
+
+    msg_countdown--;
+}
+
+/**
+ * Standard Arduino loop function
+ */
+void loop()
+{
+    get_instruction();
+    read_update_quadrature();
+    update_control_state();
+    send_state_update();
 }
 
