@@ -33,6 +33,7 @@
 ***************************************************/
 
 /****************** CONSTANTS *******************/
+/* Microseconds per second */
 #define US_PER_SEC    (1000*1000)
 
 /******************* UTILITY ********************/
@@ -50,6 +51,7 @@
 #define LHS_PIN2      10
 
 /* Quadrature encoder pins. */
+/* Rename these to QUAD_RHS_YEL and QUAD_RHS_WHITE. Similarly LHS. */
 #define QUAD_RHS_0      3
 #define QUAD_RHS_1      4
 #define QUAD_LHS_0      11
@@ -342,7 +344,7 @@ void read_update_motor_quadrature(int motor_ind)
     uint8_t new_quad_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
     quad_state_e new_quad_state = QSCM[motor_state->curr_quad_pin_state][new_quad_pin_state];
     motor_state->curr_quad_pin_state = new_quad_pin_state;
-    Serial.write('0' + new_quad_pin_state);
+    /*Serial.write('0' + new_quad_pin_state);*/
     unsigned long now = micros();
 
     switch (new_quad_state)
@@ -370,7 +372,7 @@ void read_update_motor_quadrature(int motor_ind)
 void read_update_quadrature()
 {
     read_update_motor_quadrature(MOTOR_RHS);
-    read_update_motor_quadrature(MOTOR_LHS);
+    /*read_update_motor_quadrature(MOTOR_LHS);*/
 }
 
 /* Uses error between observed speed and desired speed to calculate PWM duty
@@ -386,6 +388,8 @@ void update_motor_control(int motor_ind)
             uint16_t new_power = K_P * error;
             uint8_t duty = MAX(UINT8_MAX, new_power);
             set_motor_params(motor_ind, motor_forward, duty);
+            /* TODO: Increase clicks remaining if we're going in the wrong
+             * direction? */
             motor->clicks_remaining--;
         }
         else
@@ -394,13 +398,14 @@ void update_motor_control(int motor_ind)
             set_motor_params(motor_ind, motor_brake, 0x00);
         }
     }
+    motor->fresh_state = false;
 }
 
 /* Updates the output control state for each motor */
 void update_control_state()
 {
     update_motor_control(MOTOR_RHS);
-    update_motor_control(MOTOR_LHS);
+    /*update_motor_control(MOTOR_LHS);*/
 }
 
 void send_state_update()
