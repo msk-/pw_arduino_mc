@@ -214,7 +214,7 @@ void loop()
     get_instruction();
     read_update_quadrature();
     update_control_state();
-    /*send_state_update();*/
+    send_state_update();
 }
 
 /**************************************************
@@ -272,28 +272,24 @@ static void handle_ctrl_frame_received(const control_frame_t* frame)
     switch (frame->command)
     {
     case CMD_LHS_FWD:
-        Serial.write('1');
         lhs_state.desired_dir = qs_forward;
         lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         lhs_state.fresh_state = true;
         break;
     case CMD_LHS_BACK:
-        Serial.write('3');
         lhs_state.desired_dir = qs_backward;
         lhs_state.clicks_remaining = frame->ticks;
         lhs_state.target_freq = frame->freq;
         lhs_state.fresh_state = true;
         break;
     case CMD_RHS_FWD:
-        Serial.write('2');
         rhs_state.desired_dir = qs_forward;
         rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
         rhs_state.fresh_state = true;
         break;
     case CMD_RHS_BACK:
-        Serial.write('4');
         rhs_state.desired_dir = qs_backward;
         rhs_state.clicks_remaining = frame->ticks;
         rhs_state.target_freq = frame->freq;
@@ -373,7 +369,6 @@ static void read_update_motor_quadrature(int motor_ind)
     uint8_t new_quad_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
     quad_state_e new_quad_state = QSCM[motor_state->curr_quad_pin_state][new_quad_pin_state];
     motor_state->curr_quad_pin_state = new_quad_pin_state;
-    /*Serial.write('0' + new_quad_pin_state);*/
     unsigned long now = micros();
 
     switch (new_quad_state)
@@ -401,18 +396,16 @@ static void read_update_motor_quadrature(int motor_ind)
 static void read_update_quadrature()
 {
     read_update_motor_quadrature(MOTOR_RHS);
-    /*read_update_motor_quadrature(MOTOR_LHS);*/
+    read_update_motor_quadrature(MOTOR_LHS);
 }
 
 /* Uses error between observed speed and desired speed to calculate PWM duty
  * (power to motor) in order to achieve desired speed */
 static void update_motor_control(int motor_ind)
 {
-    /*Serial.write('1');*/
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
     if (motor->fresh_state)
     {
-        Serial.write('2');
         if (motor->clicks_remaining > 0)
         {
             uint16_t error = motor->target_freq - motor->freq;
@@ -436,7 +429,7 @@ static void update_motor_control(int motor_ind)
 static void update_control_state()
 {
     update_motor_control(MOTOR_RHS);
-    /*update_motor_control(MOTOR_LHS);*/
+    update_motor_control(MOTOR_LHS);
 }
 
 static void send_state_update()
