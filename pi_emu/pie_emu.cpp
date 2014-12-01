@@ -38,24 +38,24 @@ struct clicks_remaining_msg_t
 };
 
 #if 0
-#pragma GCC diagnostic ignored "-Wmissing-braces"
+/* #pragma GCC diagnostic ignored "-Wmissing-braces" */
 static std::array<std::array<uint8_t, 7>, 4> instructions =
-{
-    { HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 },
-    { HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 },
-    { HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 },
-    { HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }
-};
+{{
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }},
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }},
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }},
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x00, 0xFF, 0x00, 0xFF, 0x00 }}
+}};
 #endif
 
 static const boost::array<uint8_t, 5> lhs_fwd_fullspeed =
-    {{ HEADER_BYTE, CMD_LHS_FWD, 0xFE, 0xFE, 0x00 }};
+    {{ HEADER_BYTE, CMD_LHS_FWD, 0x20, 0x20, 0x00 }};
 static const boost::array<uint8_t, 5> rhs_fwd_fullspeed =
-    {{ HEADER_BYTE, CMD_RHS_FWD, 0xFE, 0xFE, HEADER_BYTE ^ CMD_RHS_FWD }};
+    {{ HEADER_BYTE, CMD_RHS_FWD, 0x20, 0x20, HEADER_BYTE ^ CMD_RHS_FWD }};
 static const boost::array<uint8_t, 5> lhs_back_fullspeed =
-    {{ HEADER_BYTE, CMD_LHS_BACK, 0xFE, 0xFE, HEADER_BYTE ^ CMD_LHS_BACK }};
+    {{ HEADER_BYTE, CMD_LHS_BACK, 0x20, 0x20, HEADER_BYTE ^ CMD_LHS_BACK }};
 static const boost::array<uint8_t, 5> rhs_back_fullspeed =
-    {{ HEADER_BYTE, CMD_RHS_BACK, 0xFE, 0xFE, HEADER_BYTE ^ CMD_RHS_BACK }};
+    {{ HEADER_BYTE, CMD_RHS_BACK, 0x20, 0x20, HEADER_BYTE ^ CMD_RHS_BACK }};
 
 void reset_tty()
 {
@@ -155,7 +155,15 @@ void handle_arduino_response(
             break;
         case read_state_speed:
         case read_state_none:
-            std::cout << "Got bollocks from arduino: " << read_byte << std::endl;
+            if (read_byte == 'e')
+            {
+                std::cout << std::endl;
+            }
+            else
+            {
+                std::cout << read_byte << std::flush;
+            }
+            /*std::cout << "Got rubbish from arduino: " << read_byte << std::endl;*/
             break;
         }
     }
@@ -198,12 +206,12 @@ void handle_user_input(
         async_write(arduino, buffer(lhs_fwd_fullspeed), handle_arduino_write);
         break;
     case '2':
-        std::cout << "RHS forward fullspeed" << std::endl;
-        async_write(arduino, buffer(rhs_fwd_fullspeed), handle_arduino_write);
-        break;
-    case '3':
         std::cout << "LHS backward fullspeed" << std::endl;
         async_write(arduino, buffer(lhs_back_fullspeed), handle_arduino_write);
+        break;
+    case '3':
+        std::cout << "RHS forward fullspeed" << std::endl;
+        async_write(arduino, buffer(rhs_fwd_fullspeed), handle_arduino_write);
         break;
     case '4':
         std::cout << "RHS backward fullspeed" << std::endl;
