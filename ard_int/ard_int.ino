@@ -42,6 +42,7 @@ static const unsigned long MICROS_PER_MESSAGE = US_PER_SEC / 4UL;
 
 /******************* UTILITY ********************/
 #define MAX(a,b) ((a > b) ? a : b)
+#define MIN(a,b) ((a < b) ? a : b)
 
 /******************** LIMITS ********************/
 #define UINT8_MAX 0xFF
@@ -71,21 +72,24 @@ static const unsigned long MICROS_PER_MESSAGE = US_PER_SEC / 4UL;
 #define MOTOR_LHS     EN_LHS
 
 /***************** CONTROL DEFS *****************/
-/* Maximum frequency. Total guess at this stage. Might need calibration. */
-/* TODO: used? */
-#define MAX_FREQ 200
-
 /* Gain values for PID control */
 static const double K_P = 0.9;
 static const double K_I = (double)1 / (double)US_PER_SEC;
 static const double K_D = 0.0001;
+#if 0
+static const int32_t RHS_DENOM = 39;
+static const int32_t LHS_DENOM = 40;
+#endif
+static const int32_t RHS_DENOM = 44;
+static const int32_t LHS_DENOM = 45;
+static const int32_t NUMERATOR = RHS_DENOM;
 
 /****************** COMMS DEFS ******************/
 #define  HEADER_BYTE               0xFF
-#define  CMD_LHS_FWD               0x00
-#define  CMD_LHS_BACK              0x01
-#define  CMD_RHS_FWD               0x02
-#define  CMD_RHS_BACK              0x03
+#define  CMD_RHS_FWD               0x00
+#define  CMD_RHS_BACK              0x01
+#define  CMD_LHS_FWD               0x02
+#define  CMD_LHS_BACK              0x03
 #define  CMD_ACK                   0x04
 #define  CMD_STALL                 0x05
 #define  CMD_RHS_CLICKS_REMAINING  0x06
@@ -132,7 +136,7 @@ typedef struct control_frame_t
 
 typedef struct motor_state_t
 {
-    /* TODO: 
+    /* TODO:
     uint8_t enable_pin;
     uint8_t out_pin_1;
     uint8_t out_pin_2;
@@ -140,7 +144,7 @@ typedef struct motor_state_t
     size_t quad_click_ix;
     unsigned long quad_click_times[MOVING_AVERAGE_SIZE];
     motor_control_e desired_dir;
-    quad_state_e current_dir;
+    motor_control_e current_dir;
     int32_t accumulated_error;
     uint8_t curr_duty;
     uint8_t curr_quad_pin_state;
@@ -255,7 +259,7 @@ void loop()
 static void initialise_motor(motor_state_t* state)
 {
     state->desired_dir = MOTOR_FORWARD;
-    state->current_dir = QS_NO_CHANGE;
+    state->current_dir = MOTOR_BRAKE;
     state->accumulated_error = 0;
     state->curr_duty = 0;
     state->curr_quad_pin_state = 0;
@@ -364,6 +368,7 @@ static void get_instruction()
     static control_frame_t new_ctrl_frame;
     static uint8_t checksum;
     uint8_t read_byte;
+
     if (Serial.available())
     {
         read_byte = Serial.read();
@@ -408,7 +413,6 @@ static void get_instruction()
 #if SEND_NACKS
                 else
                 {
-                    /* TODO: write nack back over serial? */
                     Serial.write(HEADER_BYTE);
                     Serial.write(CMD_NACK);
                     Serial.write(CMD_NACK ^ HEADER_BYTE);
@@ -437,6 +441,7 @@ static void update_motor_quadrature_data(int motor_ind)
     unsigned long now = micros();
     int32_t old_freq = motor->freq;
     size_t oldest_quad_click_ix = (motor->quad_click_ix + 1) % MOVING_AVERAGE_SIZE;
+    bool update_motor_info = false;
 
     switch (new_quad_state)
     {
@@ -444,21 +449,12 @@ static void update_motor_quadrature_data(int motor_ind)
         /* TODO */
         break;
     case QS_FORWARD:
-        /* TODO: we should probably handle forward and backward movement
-         * separately. (Perhaps backward motion should just be negative forward
-         * motion for the purpose of calculating motor power). */
-        /* Fall-through intentional */
+        motor->current_dir = MOTOR_FORWARD;
+        update_motor_info = true;
+        break;
     case QS_BACKWARD:
-        /* TODO: Increase clicks remaining if we're going in the wrong
-         * direction? */
-        motor->current_dir = new_quad_state;
-        motor->clicks_remaining -= (motor->clicks_remaining > 0) ? 1 : 0;
-        motor->dt_us = now - motor->quad_click_times[oldest_quad_click_ix];
-        motor->freq = (motor->dt_us == 0) ? 0 : 
-            (MOVING_AVERAGE_SIZE * US_PER_SEC) / motor->dt_us;
-        motor->dfreq = motor->freq - old_freq;
-        motor->quad_click_ix = oldest_quad_click_ix;
-        motor->quad_click_times[oldest_quad_click_ix] = now;
+        motor->current_dir = MOTOR_BACKWARD;
+        update_motor_info = true;
         break;
     case QS_NO_CHANGE:
         /* TODO: if QS_NO_CHANGE happens for too long, and we have a desired
@@ -468,6 +464,31 @@ static void update_motor_quadrature_data(int motor_ind)
             (MOVING_AVERAGE_SIZE * US_PER_SEC) / motor->dt_us;
         motor->dfreq = motor->freq - old_freq;
         break;
+    }
+
+    if (update_motor_info)
+    {
+        /* If we've stopped, some perturbation might cause us to register a
+         * click. We don't want spontaneous movement, so we'll ignore any clicks
+         * that occur if we've stopped already. However, if we wanted stability
+         * on a non-flat surface, changing this could be one way to do it */
+        if (motor->clicks_remaining > 0)
+        {
+            if (motor->current_dir == motor->desired_dir)
+            {
+                motor->clicks_remaining--;
+            }
+            else
+            {
+                motor->clicks_remaining++;
+            }
+        }
+        motor->dt_us = now - motor->quad_click_times[oldest_quad_click_ix];
+        motor->freq = (motor->dt_us == 0) ? 0 : 
+            (MOVING_AVERAGE_SIZE * US_PER_SEC) / motor->dt_us;
+        motor->dfreq = motor->freq - old_freq;
+        motor->quad_click_ix = oldest_quad_click_ix;
+        motor->quad_click_times[oldest_quad_click_ix] = now;
     }
 }
 
@@ -493,6 +514,7 @@ static void update_motor_control(int motor_ind)
     unsigned long control_dt = now - motor->last_control_update_us;
     if (motor->clicks_remaining > 0)
     {
+        #if 0
         int32_t error = motor->target_freq - motor->freq;
         motor->accumulated_error += error * control_dt;
         int32_t proportional_term = K_P * error;
@@ -501,6 +523,10 @@ static void update_motor_control(int motor_ind)
         int32_t new_power = proportional_term + integral_term; /* + derivative_term; */
         uint8_t duty = (new_power < 0) ? 0 :
                        ((new_power > UINT8_MAX) ? UINT8_MAX : new_power);
+        #endif
+        uint8_t duty = 
+            (NUMERATOR * motor->target_freq * 0xFF) /
+            (320 * ((motor_ind == MOTOR_LHS) ? RHS_DENOM : LHS_DENOM));
 #if 0
         Serial.write('\n');
         Serial.print(motor->clicks_remaining);
@@ -527,7 +553,6 @@ static void update_motor_control(int motor_ind)
     }
     else
     {
-        /* TODO: MOTOR_BRAKE or MOTOR_COAST? */
         set_motor_params(motor_ind, MOTOR_BRAKE, 0);
     }
     motor->last_control_update_us = now;
@@ -551,13 +576,14 @@ static void send_state_update()
 {
     uint8_t clicks_remaining;
 
-    clicks_remaining = (lhs_state.clicks_remaining >> 1) & 0xFF;
+    clicks_remaining = (MIN(lhs_state.clicks_remaining, 0x1FC) >> 1) & 0xFF;
     Serial.write(HEADER_BYTE);
     Serial.write(CMD_LHS_CLICKS_REMAINING);
     Serial.write(clicks_remaining);
     Serial.write(HEADER_BYTE ^ CMD_LHS_CLICKS_REMAINING ^ clicks_remaining);
 
-    clicks_remaining = (rhs_state.clicks_remaining >> 1) & 0xFF;
+    /* clicks_remaining = (rhs_state.clicks_remaining >> 1) & 0xFF; */
+    clicks_remaining = (MIN(rhs_state.clicks_remaining, 0x1FC) >> 1) & 0xFF;
     Serial.write(HEADER_BYTE);
     Serial.write(CMD_RHS_CLICKS_REMAINING);
     Serial.write(clicks_remaining);
