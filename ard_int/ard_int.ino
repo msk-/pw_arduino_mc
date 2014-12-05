@@ -620,7 +620,11 @@ static void ultrasound_poll(microseconds_t this_time)
         if (digitalRead(ULTRASOUND) == LOW)
         {
             unsigned int distance = (unsigned int) ((ultrasound_start - this_time) / (29UL * 2UL));
-            last_distance_cm += (distance - last_distance_cm) / 4;
+            /* Ignore big values - we didn't bounce off anything and it screws our average */
+            if (distance < 800)
+            {
+                last_distance_cm += (distance - last_distance_cm) / 4;
+            }
             ultrasound_state = ULTRASOUND_SLEEP;
             if (ultrasound_count == 0)
             {
