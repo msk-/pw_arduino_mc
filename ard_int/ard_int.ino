@@ -32,13 +32,14 @@
 * Defines
 ***************************************************/
 
-/****************** CONSTANTS *******************/
 /* Microseconds per second */
-static const unsigned long US_PER_SEC = 1000UL * 1000UL;
+#define US_PER_SEC (1000UL * 1000UL)
 /* This value may need tuning */
-static const unsigned long MICROS_PER_CONTROL = 1000UL;
+#define MICROS_PER_CONTROL (1000UL)
 /* Four per second is plenty */
-static const unsigned long MICROS_PER_MESSAGE = US_PER_SEC / 4UL;
+#define MICROS_PER_MESSAGE (US_PER_SEC / 4UL)
+/* Every 100ms */
+#define ULTRASOUND_WAIT (100UL * 1000UL)
 
 /******************* UTILITY ********************/
 #define MAX(a,b) ((a > b) ? a : b)
@@ -63,6 +64,8 @@ static const unsigned long MICROS_PER_MESSAGE = US_PER_SEC / 4UL;
 #define QUAD_LHS_1      12
 
 #define LED           13
+
+#define ULTRASOUND A0
 
 /****************** MOTOR DEFS ******************/
 #define FULL_POWER  255
@@ -90,11 +93,13 @@ static const double K_D = 0.0001;
 #define  CMD_STALL                 0x05
 #define  CMD_RHS_CLICKS_REMAINING  0x06
 #define  CMD_LHS_CLICKS_REMAINING  0x07
-#define  CLICKS_UPDATE_FREQUENCY   0x08
+#define  CMD_DISTANCE_UPDATE       0x08
 
 /**************************************************
 * Data Types
 **************************************************/
+
+typedef unsigned long microseconds_t;
 
 typedef enum quad_state_e
 {
@@ -123,6 +128,13 @@ typedef enum motor_control_e
     MOTOR_BRAKE
 } motor_control_e;
 
+typedef enum ultrasound_state_e
+{
+    ULTRASOUND_SLEEP,
+    ULTRASOUND_WAIT_FOR_HIGH,
+    ULTRASOUND_WAIT_FOR_LOW,
+} ultrasound_state_e;
+
 typedef struct control_frame_t
 {
     uint8_t command;
@@ -138,7 +150,7 @@ typedef struct motor_state_t
     uint8_t out_pin_2;
     */
     size_t quad_click_ix;
-    unsigned long quad_click_times[MOVING_AVERAGE_SIZE];
+    microseconds_t quad_click_times[MOVING_AVERAGE_SIZE];
     motor_control_e desired_dir;
     quad_state_e current_dir;
     int32_t accumulated_error;
@@ -146,8 +158,8 @@ typedef struct motor_state_t
     uint8_t curr_quad_pin_state;
     int32_t target_freq;
     uint16_t clicks_remaining;
-    unsigned long last_control_update_us;
-    unsigned long dt_us;
+    microseconds_t last_control_update_us;
+    microseconds_t dt_us;
     int32_t dfreq;
     int32_t freq;
 } motor_state_t;
@@ -156,6 +168,7 @@ typedef struct motor_state_t
 * Private function declarations
 ***************************************************/
 
+static void initialise_motor(motor_state_t* state);
 static void control_motor(int en_pin, int in_0, int state_0, int in_1, int state_1, int duty);
 static void set_motor_params(int motor_ind, motor_control_e mode, uint8_t duty);
 static void handle_ctrl_frame_received(const control_frame_t* frame);
@@ -165,10 +178,11 @@ static void update_quadrature_data();
 static void update_motor_control(int motor_ind);
 static void update_control_state();
 static void send_state_update();
-static void initialise_motor(motor_state_t* state);
+static void ultrasound_poll(microseconds_t this_time);
+static void send_ultrasound_update();
 
 /**************************************************
-* Public Data
+* Private Data
 **************************************************/
 
 /* Quadrature encoder interpretation matrix */
@@ -184,8 +198,13 @@ static const quad_state_e QSCM[QS_NUM_STATES][QS_NUM_STATES] =
 /******************** STATE *********************/
 static motor_state_t rhs_state;
 static motor_state_t lhs_state;
-static unsigned long last_message;
-static unsigned long last_control;
+static microseconds_t last_message;
+static microseconds_t last_control;
+static ultrasound_state_e ultrasound_state;
+static microseconds_t ultrasound_start;
+/* This is in centimetres */
+static unsigned int last_distance_cm;
+static unsigned int ultrasound_count;
 
 /**************************************************
 * Public Functions
@@ -208,6 +227,8 @@ void setup()
     pinMode(QUAD_RHS_1, INPUT);
     pinMode(QUAD_LHS_0, INPUT);
     pinMode(QUAD_LHS_1, INPUT);
+    pinMode(ULTRASOUND, OUTPUT);
+    digitalWrite(ULTRASOUND, LOW);
 
     /* TODO: Set all pin initial states (i.e. motors stopped) */
 
@@ -224,8 +245,8 @@ void setup()
  */
 void loop()
 {
-    unsigned long this_time = micros();
-    unsigned long delta;
+    microseconds_t this_time = micros();
+    microseconds_t delta;
 
     get_instruction();
     update_quadrature_data();
@@ -243,6 +264,8 @@ void loop()
         send_state_update();
         last_message = this_time;
     }
+
+    ultrasound_poll(this_time);
 }
 
 /**************************************************
@@ -434,7 +457,7 @@ static void update_motor_quadrature_data(int motor_ind)
     uint8_t new_quad_pin_state = digitalRead(q_pin_0) + (digitalRead(q_pin_1) << 1);
     quad_state_e new_quad_state = QSCM[motor->curr_quad_pin_state][new_quad_pin_state];
     motor->curr_quad_pin_state = new_quad_pin_state;
-    unsigned long now = micros();
+    microseconds_t now = micros();
     int32_t old_freq = motor->freq;
     size_t oldest_quad_click_ix = (motor->quad_click_ix + 1) % MOVING_AVERAGE_SIZE;
 
@@ -489,8 +512,8 @@ static void update_quadrature_data()
 static void update_motor_control(int motor_ind)
 {
     motor_state_t* motor = (motor_ind == MOTOR_RHS) ? &rhs_state : &lhs_state;
-    unsigned long now = micros();
-    unsigned long control_dt = now - motor->last_control_update_us;
+    microseconds_t now = micros();
+    microseconds_t control_dt = now - motor->last_control_update_us;
     if (motor->clicks_remaining > 0)
     {
         int32_t error = motor->target_freq - motor->freq;
@@ -564,3 +587,73 @@ static void send_state_update()
     Serial.write(HEADER_BYTE ^ CMD_RHS_CLICKS_REMAINING ^ clicks_remaining);
 }
 
+/**
+ * Go around the ultrasound state machine.
+ *
+ * @param[in] this_time The current time in microseconds
+ */
+static void ultrasound_poll(microseconds_t this_time)
+{
+    microseconds_t delta;
+    switch(ultrasound_state)
+    {
+    case ULTRASOUND_SLEEP:
+        delta = this_time - ultrasound_start;
+        if (delta >= ULTRASOUND_WAIT)
+        {
+            pinMode(ULTRASOUND, OUTPUT);
+            digitalWrite(ULTRASOUND, HIGH);
+            delayMicroseconds(10);
+            digitalWrite(ULTRASOUND, LOW);
+            pinMode(ULTRASOUND, INPUT);
+            ultrasound_state = ULTRASOUND_WAIT_FOR_HIGH;
+        }
+        break;
+    case ULTRASOUND_WAIT_FOR_HIGH:
+        if (digitalRead(ULTRASOUND) == HIGH)
+        {
+            ultrasound_state = ULTRASOUND_WAIT_FOR_LOW;
+            ultrasound_start = this_time;
+        }
+        break;
+    case ULTRASOUND_WAIT_FOR_LOW:
+        if (digitalRead(ULTRASOUND) == LOW)
+        {
+            unsigned int distance = (unsigned int) ((ultrasound_start - this_time) / (29UL * 2UL));
+            last_distance_cm += (distance - last_distance_cm) / 4;
+            ultrasound_state = ULTRASOUND_SLEEP;
+            if (ultrasound_count == 0)
+            {
+                send_ultrasound_update();
+                /* Two updates per second */
+                ultrasound_count = (US_PER_SEC / ULTRASOUND_WAIT) / 2;
+            }
+            ultrasound_count--;
+        }
+        break;
+    }
+}
+
+/**
+ * Updates the Pi with our current estimate of range.
+ */
+static void send_ultrasound_update()
+{
+    uint8_t distance_byte;
+    if (last_distance_cm >= 255)
+    {
+        distance_byte = 254;
+    }
+    else
+    {
+        distance_byte = last_distance_cm;
+    }
+    Serial.write(HEADER_BYTE);
+    Serial.write(CMD_DISTANCE_UPDATE);
+    Serial.write(distance_byte);
+    Serial.write(HEADER_BYTE ^ CMD_DISTANCE_UPDATE ^ distance_byte);
+}
+
+/**************************************************
+* End of file
+***************************************************/
