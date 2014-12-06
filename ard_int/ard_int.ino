@@ -40,6 +40,11 @@
 #define MICROS_PER_MESSAGE (US_PER_SEC / 4UL)
 /* Every 100ms */
 #define ULTRASOUND_WAIT (100UL * 1000UL)
+/* 29 cm travelled by the ultrasound pulse per millisecond */
+#define ULTRASOUND_CM_PER_MS 29UL
+#define ULTRASOUND_CM_PER_US 0.029
+/* 10us pulse on the ultrasound sensor */
+#define ULTRASOUND_PULSE_MS 10
 
 /******************* UTILITY ********************/
 #define MAX(a,b) ((a > b) ? a : b)
@@ -234,7 +239,7 @@ void setup()
     pinMode(ULTRASOUND, OUTPUT);
     digitalWrite(ULTRASOUND, LOW);
 
-    /* TODO: Set all pin initial states (i.e. motors stopped) */
+    /* TODO: Explicitly set all pin initial states (i.e. motors stopped) */
 
     /* Initialise state */
     initialise_motor(&rhs_state);
@@ -620,19 +625,19 @@ static void send_state_update()
  */
 static void ultrasound_poll(microseconds_t this_time)
 {
-    microseconds_t delta;
+    microseconds_t delta = this_time - ultrasound_start;
     switch(ultrasound_state)
     {
     case ULTRASOUND_SLEEP:
-        delta = this_time - ultrasound_start;
         if (delta >= ULTRASOUND_WAIT)
         {
             pinMode(ULTRASOUND, OUTPUT);
             digitalWrite(ULTRASOUND, HIGH);
-            delayMicroseconds(10);
+            delayMicroseconds(ULTRASOUND_PULSE_MS);
             digitalWrite(ULTRASOUND, LOW);
             pinMode(ULTRASOUND, INPUT);
             ultrasound_state = ULTRASOUND_WAIT_FOR_HIGH;
+            ultrasound_start = this_time + ULTRASOUND_PULSE_MS;
         }
         break;
     case ULTRASOUND_WAIT_FOR_HIGH:
@@ -641,16 +646,23 @@ static void ultrasound_poll(microseconds_t this_time)
             ultrasound_state = ULTRASOUND_WAIT_FOR_LOW;
             ultrasound_start = this_time;
         }
+        else if (delta >= ULTRASOUND_WAIT)
+        {
+            ultrasound_state = ULTRASOUND_SLEEP;
+        }
         break;
     case ULTRASOUND_WAIT_FOR_LOW:
         if (digitalRead(ULTRASOUND) == LOW)
         {
-            unsigned int distance = (unsigned int) ((ultrasound_start - this_time) / (29UL * 2UL));
+            unsigned int distance = (unsigned int)(delta * ULTRASOUND_CM_PER_US);
             /* Ignore big values - we didn't bounce off anything and it screws our average */
+            #if 0
             if (distance < 800)
             {
                 last_distance_cm += (distance - last_distance_cm) / 4;
             }
+            #endif
+            last_distance_cm = distance;
             ultrasound_state = ULTRASOUND_SLEEP;
             if (ultrasound_count == 0)
             {
